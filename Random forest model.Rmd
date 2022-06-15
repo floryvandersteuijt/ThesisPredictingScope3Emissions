@@ -1,0 +1,159 @@
+---
+title: "Random Forests"
+---
+
+
+```{r}
+library("ranger")
+library("doParallel")
+library("vip")
+library("skimr")
+library("corrplot")
+library("ggridges")
+library("tidymodels")
+library("themis")
+library("knitr")
+library("janitor")
+```
+
+
+## Setting up a recipe
+
+
+```{r}
+rf_recipe_downsample <-  recipe(scope3 ~ ., data = data_final_train) %>%
+  step_rm(number)
+rf_recipe_downsample
+```
+
+ 
+## Specify a random forest model for classification
+
+
+
+```{r}
+rf_model_tune <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("ranger")
+```
+
+## Combine this into a workflow for tuning
+
+
+
+```{r}
+rf_tune_wf <- workflow() %>%
+  add_recipe(rf_recipe_downsample) %>%
+  add_model(rf_model_tune)
+rf_tune_wf
+```
+
+## Performing tuning
+
+```{r}
+class_metrics <- metric_set(rmse, mae, rsq_trad)
+```
+
+
+```{r}
+registerDoParallel()
+```
+
+
+```{r}
+rf_grid <- expand.grid(mtry = 3:5, 
+                        trees = 1000, 
+                         min_n = 1:5)
+```
+
+```{r}
+set.seed(99154345)
+doParallel::registerDoParallel()
+rf_tune_res <- tune_grid(
+  rf_tune_wf,
+  resamples = train_folds,
+  grid = rf_grid,
+  metrics = class_metrics
+)
+```
+
+## Selecting tuning parameter values
+
+
+```{r}
+rf_tune_res %>%
+  collect_metrics()
+```
+
+
+
+Here are the results for these metrics:
+```{r}
+rf_tune_res %>%
+  collect_metrics() %>%
+  filter(.metric %in% c("mae", "rsq_trad")) %>%
+  ggplot(aes(x = mtry, y = mean, ymin = mean - std_err, ymax = mean + std_err, 
+             colour = .metric)) +
+  geom_errorbar() + 
+  geom_line() +
+  geom_point() +
+  facet_grid(.metric ~ ., scales = "free_y") 
+
+```
+
+
+```{r}
+rf_tune_res %>%
+  collect_metrics() %>%
+  filter(.metric %in% c('rmse', 'mae', 'rsq_trad')) %>%
+  ggplot(aes(x = mtry, y = mean, ymin = mean - std_err, ymax = mean + std_err, 
+             colour = .metric)) +
+  geom_errorbar() + 
+  geom_line() +
+  geom_point() +
+  facet_grid(.metric ~ ., scales = "free_y") 
+```
+
+
+```{r}
+rf_tune_res %>% show_best("rmse")
+```
+```{r}
+rf_tune_res %>% show_best("mae")
+```
+
+```{r}
+rf_tune_res %>% show_best("rsq_trad")
+```
+
+```{r}
+best_rmse <- select_best(rf_tune_res, "mae")
+best_rmse
+```
+
+```{r}
+rf_final_wf <- finalize_workflow(rf_tune_wf, best_rmse)
+rf_final_wf
+```
+
+## Test set performance
+
+
+```{r}
+set.seed(9923)
+rf_final_fit <- rf_final_wf %>%
+  last_fit(data_final_splits, metrics = class_metrics)
+```
+
+
+```{r}
+rf_metrics <- rf_final_fit %>%
+  collect_metrics()
+rf_metrics
+```
+
+
+
+
+
+

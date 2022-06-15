@@ -1,0 +1,102 @@
+---
+title: "Predictor contribution"
+output: html_notebook
+---
+
+## Variable/predictor importance scores
+
+#OLS
+
+First standardize predictors (not dummy variables)
+```{r}
+data_final_train_std <- data_final_train %>% mutate_at(c(3:14), ~(scale(.) %>% as.vector))
+data_final_train_std
+```
+
+build OLS model
+```{r}
+lm_pi <- lm(scope3 ~ . - number, data = data_final_train_std)
+stargazer(lm_pi)
+```
+
+```{r}
+library(stargazer)
+```
+
+```{r}
+OLS_importance <- round(lm_pi$coefficients, digits = 4)
+```
+
+
+```{r}
+stargazer(lm_pi, type = 'latex')
+```
+
+
+# Lasso
+
+```{r}
+y <- Final_dataset_log_winso_pi$scope3
+x <- data.matrix(Final_dataset_log_winso_pi[, c(3:41)])
+lasso_pi <- glmnet(x, y, alpha = 1, lambda = 0.0051318)
+coef(lasso_pi)
+```
+
+# Ridge
+
+```{r}
+y <- Final_dataset_log_winso_pi$scope3
+x <- data.matrix(Final_dataset_log_winso_pi[, c(3:41)])
+ridge_pi <- glmnet(x, y, alpha = 0, lambda = 1.28e-05)
+coef(ridge_pi)
+```
+
+# Random forest
+
+```{r}
+rf_model_vi <- rand_forest(mtry = 4, trees = 1000, min_n = 1) %>%
+  set_mode("regression") %>%
+  set_engine("ranger", importance = "permutation")
+rf_vi_wf <- workflow() %>% 
+  add_model(rf_model_vi) %>% 
+  add_recipe(rf_recipe_downsample)
+```
+
+
+```{r}
+set.seed(9923)
+rf_vi_fit <- rf_vi_wf %>% fit(data = data_final_train)
+```
+
+```{r}
+rf_vi_fit %>% pull_workflow_fit() %>% vip(geom = "point", num_features = 20)
+```
+
+# Gradient boosting
+
+```{r}
+data_final_train_matrix <- data.matrix(data_final_train, rownames.force = NA)
+data_final_train_label <- data.matrix(data_final_train[,2])
+data_final_train_pred <- data.matrix(data_final_train[,3:41])
+```
+
+```{r}
+library(Ckmeans.1d.dp)
+```
+
+```{r}
+model_xgboost <- xgboost(data = data_final_train_pred, label = data_final_train_label, max.depth = 6, nrounds = 100, verbose = 0, eta = 0.1)
+importance_matrix <- xgb.importance(feature_names = colnames(data_final_train[,3:41]), model = model_xgboost)
+importance_matrix_plot <- xgb.plot.importance(importance_matrix, top_n = 20)
+
+```
+
+
+```{r}
+importance_matrix$rounded <- round(importance_matrix$Gain, digits = 3)
+```
+
+
+
+
+

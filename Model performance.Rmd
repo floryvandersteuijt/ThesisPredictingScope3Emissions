@@ -1,0 +1,80 @@
+---
+title: "Model performance"
+output: html_notebook
+---
+
+## Compare all models
+
+
+```{r}
+lm_metrics <- lm_metrics %>% 
+  mutate(model = "OLS")
+knn_regr_metrics <- knn_regr_metrics %>% 
+  mutate(model = "KNN",
+         improvement = round((lm_metrics$.estimate - knn_regr_metrics$.estimate)/lm_metrics$.estimate * 100, digits = 4))
+lasso_test_metrics <- lasso_test_metrics %>% 
+  mutate(model = "lasso",
+         improvement = round((lm_metrics$.estimate - lasso_test_metrics$.estimate)/lm_metrics$.estimate* 100, digits = 4))
+ridge_test_metrics <- ridge_test_metrics %>% 
+  mutate(model = "ridge",
+         improvement = round((lm_metrics$.estimate - ridge_test_metrics$.estimate)/lm_metrics$.estimate* 100, digits = 4))
+rf_metrics <- rf_metrics %>% 
+  mutate(model = "RF",
+         improvement = round((lm_metrics$.estimate - rf_metrics$.estimate)/lm_metrics$.estimate* 100, digits = 4))
+xgb_metrics <- xgb_metrics %>% 
+  mutate(model = "GB",
+         improvement = round((lm_metrics$.estimate - xgb_metrics$.estimate)/lm_metrics$.estimate* 100, digits = 4))
+```
+
+
+```{r}
+lm_metrics$.estimate <- round(lm_metrics$.estimate, digits = 4)
+knn_regr_metrics$.estimate <- round(knn_regr_metrics$.estimate, digits = 4)
+lasso_test_metrics$.estimate <- round(lasso_test_metrics$.estimate, digits = 4)
+ridge_test_metrics$.estimate <- round(ridge_test_metrics$.estimate, digits = 4)
+rf_metrics$.estimate <- round(rf_metrics$.estimate, digits = 4)
+xgb_metrics$.estimate <- round(xgb_metrics$.estimate, digits = 4)
+```
+
+```{r}
+all_metrics <- bind_rows(lm_metrics, lasso_test_metrics, ridge_test_metrics, knn_regr_metrics, rf_metrics, xgb_metrics) %>% 
+  pivot_wider(names_from = .metric, values_from = c(.estimate, improvement))
+all_metrics
+```
+
+#Visualize models' performance metrics 
+
+
+```{r}
+Figure_evaluation <- read_excel("~/Documents/Thesis/Robustness/Robustness checks2.xlsx", 
+                                sheet = "Figure Evaluation")
+Figure %>%  
+  ggplot(aes(x = Model, y = Value, 
+             colour = Metric, group = Metric)) +
+  geom_point() +
+  geom_line() +
+  labs(y = "")
+```
+
+```{r}
+Figure_improvement <- read_excel("~/Documents/Thesis/Robustness/Robustness checks2.xlsx", 
+                                sheet = "Figure improvement2")
+
+
+ggplot(data=Figure_improvement, aes(x=Model, y=Value, fill=Metric)) +
+geom_bar(stat="identity", position=position_dodge()) + labs(y = "Improvement (%)") 
+
+
+Figure_improvement %>%
+  mutate(Model = fct_relevel(Model, 
+            "OLS", "Lasso", "Ridge", 
+            "KNN", "Random Forest", "Gradient Boosting")) %>%
+  ggplot( aes(x=Model, y=Value, fill=Metric)) +
+geom_bar(stat="identity", position=position_dodge()) + labs(y = "Improvement (%)") + scale_fill_manual(values=c(
+                             "red",
+                             "darkblue",
+                             "chartreuse3"))
+```
+
+
+

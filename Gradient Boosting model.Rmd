@@ -1,0 +1,163 @@
+---
+title: "Gradient Boosting and model performances"
+
+---
+
+
+```{r}
+library("tidymodels")
+library("doParallel")
+library("themis")
+library("xgboost")
+```
+
+
+## Setting up a recipe
+
+  
+```{r}
+xgb_recipe <- recipe(scope3 ~ ., data = data_final_train) %>% 
+  step_rm(number)
+```
+
+
+Here is our specification for the gradient boosted ensemble of decision trees:
+```{r}
+xgb_model_tune <- 
+  boost_tree(trees = tune(), tree_depth = tune(), 
+             learn_rate = tune(), stop_iter = 50) %>%
+  set_mode("regression") %>%
+  set_engine("xgboost")
+```
+
+
+## Combine this into a workflow for tuning
+
+
+```{r}
+xgb_tune_wf <- workflow() %>%
+  add_recipe(xgb_recipe) %>%
+  add_model(xgb_model_tune)
+xgb_tune_wf
+```
+
+
+
+## Performing tuning
+
+
+```{r}
+class_metrics <- metric_set(rmse, mae, rsq_trad)
+```
+
+To speed up computation, we can do them in parallel using **doParallel**:
+
+```{r}
+registerDoParallel()
+```
+
+
+```{r}
+xgb_grid <- expand.grid(trees = 50 * 1:5, 
+                        learn_rate = c(0.1, 0.01), 
+                        tree_depth = 4:10)
+```
+
+
+```{r}
+xgb_tune_res <- tune_grid(
+  xgb_tune_wf,
+  resamples = train_folds,
+  grid = xgb_grid,
+  metrics = class_metrics
+)
+```
+
+
+
+## Selecting the tuning parameters' values
+
+
+```{r}
+xgb_tune_metrics <- xgb_tune_res %>%
+  collect_metrics()
+xgb_tune_metrics
+```
+
+
+
+```{r}
+xgb_tune_metrics %>% 
+  filter(.metric == "mae") %>% 
+  ggplot(aes(x = trees, y = mean, 
+             colour = factor(tree_depth))) +
+  geom_path() +
+  labs(y = "mae") + 
+  facet_wrap(~ learn_rate)
+```
+
+
+
+```{r}
+xgb_tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric %in% c("rmse", "mae", "rsq_trad")) %>%
+  ggplot(aes(x = trees, y = mean, colour = .metric)) +
+  geom_path() +
+  facet_wrap(learn_rate ~ tree_depth)
+```
+
+
+```{r}
+xgb_best_rmse <- select_best(xgb_tune_res, "mae")
+xgb_best_rmse
+```
+```{r}
+xgb_best_rmse <- select_best(xgb_tune_res, "rmse")
+xgb_best_rmse
+```
+
+```{r}
+xgb_best_rmse <- select_best(xgb_tune_res, "rsq_trad")
+xgb_best_rmse
+```
+```{r}
+xgb_best_rmse <- select_best(xgb_tune_res, "mae")
+xgb_best_rmse
+```
+
+```{r}
+xgb_best <- xgb_tune_metrics %>% 
+  filter(tree_depth == 5, learn_rate == 0.1, trees == 200) %>% 
+  select(trees:learn_rate, .metric, mean) %>%
+    pivot_wider(trees:learn_rate,
+                names_from = .metric,
+                values_from = mean)
+```
+
+
+```{r}
+xgb_final_wf <- finalize_workflow(xgb_tune_wf, xgb_best)
+xgb_final_wf
+```
+## Test set performance
+
+```{r}
+xgb_final_fit <- xgb_final_wf %>%
+  last_fit(data_final_splits, metrics = class_metrics)
+```
+
+The results on the test set for class predictions are:
+```{r}
+xgb_metrics <- xgb_final_fit %>%
+  collect_metrics()
+xgb_metrics
+```
+
+
+
+
+
+
+
+

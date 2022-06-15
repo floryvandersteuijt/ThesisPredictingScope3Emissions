@@ -1,0 +1,353 @@
+---
+title: "OLS and KNN"
+output: html_notebook
+---
+
+First exploring the data
+
+```{r}
+smaller <- data_final %>% 
+  filter(CapInt > 2000)
+ggplot(data = smaller, mapping = aes(x = CapInt)) +
+  geom_histogram(binwidth = 10)
+```
+
+
+```{r}
+smaller <- Final_dataset_log_winso %>% 
+  filter(scope3 < 5000)
+  
+ggplot(data = Final_dataset_log_winso, mapping = aes(x = scope3)) +
+  geom_histogram(binwidth = 2)
+```
+
+```{r echo = FALSE}
+Final_dataset_log_winso %>% 
+  ggplot(aes(x = Scope3,  y= Scope1)) + 
+  geom_point(aes(colour = factor(`ICB INDUSTRY NAME_Utilities`)))
+
+```
+
+```{r}
+Final_dataset_log_winso$CO2law_rgl_Yes <- as.factor(Final_dataset_log_winso$CO2law_rgl_Yes)
+```
+
+
+
+```{r}
+smaller <- data_final %>% 
+  filter(Revenue < 4000000)
+  
+ggplot(data = smaller, mapping = aes(x = Revenue)) +
+  geom_histogram(binwidth = 100000)
+```
+
+
+```{r}
+tab0 <- table(dataf$"ICB INDUSTRY NAME")
+barplot(tab0,
+        names.arg=rownames(tab0),
+        col=c("beige","orange","blue"),
+        ylab="Scope 3",
+        cex.names=.8)
+
+```
+```{r}
+install.packages('correlation')
+library(correlation)
+library(corrplot)
+```
+
+
+
+
+```{r echo = FALSE}
+Final_dataset_log_winso[,c(2:14)] %>% 
+  cor()  %>% corrplot(method = 'number', number.cex=0.75)
+```
+
+
+# OLS
+
+```{r}
+library(groupdata2)
+library(dplyr)
+library(ggplot2)
+library(knitr) # kable()
+library(broom) #tidy()
+library(hydroGOF) # rmse()
+library(caTools)
+library(tidymodels)
+```
+
+
+```{r}
+setwd("~/Documents/Thesis/Data")
+Final_dataset_log <- read_excel("~/Documents/Thesis/Data/Final_Dataset_log.xlsx")
+Final_dataset_log_winso <- read_excel("~/Documents/Thesis/Data/Final_Dataset_log_winso.xlsx")
+```
+
+```{r}
+Final_dataset_log_winso <- janitor::clean_names(Final_dataset_log_winso)
+```
+
+Descriptive analysis
+
+```{r}
+library(psych)
+describe(Final_dataset_log_winso)
+```
+
+
+## Creating a Train-Test Split
+
+
+first remove 1 dummy variable from each categorical variable to avoid highly correlated dummy variables
+```{r}
+Final_dataset_log_winso <- subset(Final_dataset_log_winso, select = -c(income_group_h, co2law_ntl_no, year_2009, co2law_rgl_no, icb_industry_name_basic_materials))
+```
+
+0.90024
+```{r}
+set.seed(8949)
+data_final_splits <- initial_time_split(Final_dataset_log_winso, prop = 0.90024)
+data_final_splits
+```
+
+```{r}
+data_final_splits$id <- tibble(id = "Resample1")
+```
+
+
+We can create the data frame for the two parts as follows:
+
+```{r}
+data_final_train <- training(data_final_splits)
+data_final_test  <- testing(data_final_splits)
+```
+
+```{r}
+c(max(data_final_train$number), min(data_final_test$number))
+```
+
+```{r}
+set.seed(1185)
+train_folds <- group_vfold_cv(data_final_train,  group = 'number', v = 10)
+```
+
+different so no dataleakage
+
+
+### Using a workflow
+
+```{r}
+lm_mod <- linear_reg() %>% 
+  set_engine("lm")
+```
+
+
+
+```{r}
+lm_mod_recipe <- 
+  recipe(scope3 ~ . , data = data_final_train) %>% 
+  step_rm(number, age, ene_use, ene_purch, fuelintensity)
+```
+These are combined into a workflow as follows:
+
+```{r}
+lm_mod_workflow <- 
+  workflow() %>% 
+  add_model(lm_mod) %>% 
+  add_recipe(lm_mod_recipe)
+```
+
+Here is the result:
+
+```{r}
+lm_mod_workflow
+```
+
+
+```{r}
+lm_mod_workflow %>% fit(data = data_final_train)
+```
+
+
+
+We will now use the test set to select the best between these two models. 
+
+```{r}
+lm_last_fit <- lm_mod_workflow %>% 
+  last_fit(data_final_splits, metrics = metric_set(rmse, mae, rsq_trad))
+```
+
+The performance on the test set for this model is
+
+```{r}
+lm_metrics <- lm_last_fit %>% collect_metrics()
+lm_metrics
+```
+
+
+
+## k-nearest Neighbours Regression
+
+
+
+
+### Setting up a tuning grid
+
+```{r}
+knn_regr_tune_grid <- tibble(neighbors = 1:15*2 - 1)
+knn_regr_tune_grid
+```
+
+### Specifying a workflow
+
+
+First, we specify the model
+
+```{r}
+knn_regr_mod <- nearest_neighbor(neighbors = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("kknn")
+```
+
+
+Since k-NN relies on distance calculations, we will normalize the features to have mean zero and standard deviation one to ensure that the measurement scales do not have undue influence on the results:
+
+
+```{r}
+knn_regr_recipe <- 
+  recipe(scope3 ~ ., data = data_final_train) %>%
+  step_normalize(all_predictors()) %>% 
+  step_rm(number, age, ene_use, ene_purch, fuelintensity)
+```
+
+
+```{r}
+data_final_train_baked <- knn_regr_recipe %>% prep(data_final_train) %>% bake(data_final_test)
+data_final_train_baked %>% head()
+```
+
+```{r}
+c(mean = mean(ads_train_baked$TV), 
+  sd = sd(ads_train_baked$TV))
+```
+
+So the mean is zero (to machine precision) and the standard deviation is one. Notice that we could have used instead
+
+
+Finally, the workflow object is then just
+```{r}
+knn_regr_workflow <-
+  workflow() %>% 
+  add_model(knn_regr_mod) %>% 
+  add_recipe(knn_regr_recipe)
+```
+We are now ready to tune our k-NN regression model using this workflow:
+
+```{r}
+knn_regr_workflow
+```
+
+
+
+### Tuning the number of nearest neighbours
+
+We perform a grid search over the grid of potential values, using our validation set, as follows:
+
+```{r}
+knn_regr_tune_res <- knn_regr_workflow %>% 
+  tune_grid(resamples = train_folds, 
+            grid = knn_regr_tune_grid,
+            metrics = metric_set(rmse, rsq_trad, mae))
+```
+
+The metrics can be collected as follows:
+
+```{r}
+knn_regr_tune_res %>% collect_metrics()
+```
+
+We can now plot them directly too, as we do here:
+
+```{r}
+knn_regr_tune_res %>% collect_metrics() %>% 
+  ggplot(aes(x = neighbors, y = mean)) + 
+  geom_point() + geom_line() + 
+  facet_wrap(~ .metric, scales = "free_y")
+```
+
+
+```{r}
+knn_regr_tune_res %>% 
+  show_best("mae", n = 3) %>% 
+  arrange(neighbors)
+```
+
+
+```{r}
+knn_regr_tune_res %>% 
+  show_best("rmse", n = 3) %>% 
+  arrange(neighbors)
+```
+
+```{r}
+knn_regr_tune_res %>% 
+  show_best("rsq_trad", n = 3) %>% 
+  arrange(neighbors)
+```
+
+
+
+### Finalizing our workflow
+
+We conclude the tuning process by finalizing our workflow as follows:
+
+```{r}
+knn_regr_best_model <- select_best(knn_regr_tune_res, metric = "rsq_trad")
+
+knn_regr_workflow_final <- 
+  knn_regr_workflow %>% 
+  finalize_workflow(knn_regr_best_model)
+```
+
+If we want to retrain on the entire training set, we could do:
+
+```{r}
+knn_regr_workflow_final %>% fit(data = data_final_train)
+```
+
+
+
+## Fit k-nearest neighbours
+
+We can do the same to train and test the selected k-NN model:
+
+```{r}
+knn_regr_last_fit <- knn_regr_workflow_final %>% 
+  last_fit(data_final_splits, 
+           metrics = metric_set(rmse, mae, rsq_trad))
+```
+
+```{r}
+knn_regr_metrics <- knn_regr_last_fit %>% 
+  collect_metrics()
+knn_regr_metrics
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
